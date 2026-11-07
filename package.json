@@ -1,0 +1,12 @@
+{
+  "name": "airtime-vending-system",
+  "version": "1.0.0",
+  "description": "Automated Safaricom and Airtel airtime vending",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
