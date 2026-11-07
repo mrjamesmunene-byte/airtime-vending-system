@@ -9,7 +9,7 @@ app.get("/", (req, res) => {
 });
 
 // Safaricom payment notification
-app.post("/mpesa/confirmation", (req, res) => {
+app.post("/payments/confirmation", (req, res) => {
     console.log("Payment received:", req.body);
 
     res.json({
@@ -19,7 +19,7 @@ app.post("/mpesa/confirmation", (req, res) => {
 });
 
 // Safaricom validation
-app.post("/mpesa/validation", (req, res) => {
+app.post("/payments/validation", (req, res) => {
     res.json({
         ResultCode: 0,
         ResultDesc: "Accepted"
