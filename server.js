@@ -40,6 +40,44 @@ async function initializeDatabase() {
   console.log("Database schema is ready.");
 }
 
+function mpesaTimestamp() {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+  }).format(new Date()).replace(/\D/g, "");
+}
+
+async function mpesaQueryStatus(checkoutRequestId) {
+  const shortcode = process.env.MPESA_SHORTCODE;
+  const passkey = process.env.MPESA_PASSKEY;
+  if (!shortcode || !passkey) throw new Error("M-Pesa query settings are not configured.");
+  const token = await mpesaAccessToken();
+  const timestamp = mpesaTimestamp();
+  const password = Buffer.from(shortcode + passkey + timestamp).toString("base64");
+  const response = await fetch(MPESA_BASE_URL + "/mpesa/stkpushquery/v1/query", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      BusinessShortCode: shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      CheckoutRequestID: checkoutRequestId
+    })
+  });
+  const result = await response.json().catch(() => ({}));
+  console.info("M-Pesa query result:", JSON.stringify({
+    httpStatus: response.status,
+    checkoutRequestId,
+    responseCode: result.ResponseCode || null,
+    resultCode: result.ResultCode ?? null,
+    resultDesc: result.ResultDesc || result.ResponseDescription || null
+  }));
+  if (!response.ok || String(result.ResponseCode) !== "0") {
+    throw new Error(result.errorMessage || result.ResponseDescription || "M-Pesa payment query was not accepted.");
+  }
+  return result;
+}
+
 async function mpesaAccessToken() {
   const key = process.env.MPESA_CONSUMER_KEY;
   const secret = process.env.MPESA_CONSUMER_SECRET;
@@ -213,6 +251,35 @@ app.post("/api/orders", async (req, res) => {
   }
 });
 
+app.get("/api/orders/:reference", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Order database is unavailable." });
+  const reference = String(req.params.reference || "").trim().toUpperCase();
+  if (!/^AV[A-F0-9]{10}$/.test(reference)) return res.status(400).json({ error: "Invalid order reference." });
+  try {
+    const result = await pool.query(
+      "SELECT order_reference, network, recipient_phone, amount_kes, status, mpesa_receipt_number, airtime_provider_status, created_at, paid_at, delivered_at FROM airtime_orders WHERE order_reference=$1",
+      [reference]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: "Order not found." });
+    const order = result.rows[0];
+    res.json({
+      orderReference: order.order_reference,
+      network: order.network,
+      recipientPhone: order.recipient_phone,
+      amountKes: money(order.amount_kes),
+      status: order.status,
+      mpesaReceipt: order.mpesa_receipt_number || null,
+      airtimeStatus: order.airtime_provider_status || null,
+      createdAt: order.created_at,
+      paidAt: order.paid_at,
+      deliveredAt: order.delivered_at
+    });
+  } catch (error) {
+    console.error("Order status lookup failed:", error.message);
+    res.status(500).json({ error: "Could not retrieve order status." });
+  }
+});
+
 app.post("/api/payments/stk-push", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Order database is not connected yet." });
   const orderReference = String(req.body.orderReference || "").trim().toUpperCase();
@@ -227,7 +294,7 @@ app.post("/api/payments/stk-push", async (req, res) => {
     if (!found.rowCount || found.rows[0].status !== "PENDING_PAYMENT") return res.status(404).json({ error: "Pending order not found." });
     const order = found.rows[0];
     const token = await mpesaAccessToken();
-    const timestamp = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date()).replace(/\D/g, "");
+    const timestamp = mpesaTimestamp();
     const password = Buffer.from(shortcode + passkey + timestamp).toString("base64");
     const payload = {
       BusinessShortCode: shortcode,
@@ -284,6 +351,13 @@ app.post("/payments/stk-callback", async (req, res) => {
       await pool.query("UPDATE airtime_orders SET status='FAILED', updated_at=NOW() WHERE id=$1 AND status='PENDING_PAYMENT'", [found.rows[0].id]);
       return;
     }
+    // Independently query Daraja; a public callback alone must not mark an order paid.
+    const query = await mpesaQueryStatus(callback.CheckoutRequestID);
+    if (String(query.ResultCode) !== "0") {
+      await pool.query("UPDATE airtime_orders SET status='REVIEW', updated_at=NOW() WHERE id=$1 AND status='PENDING_PAYMENT'", [found.rows[0].id]);
+      console.warn("STK callback not independently confirmed by Daraja; order moved to REVIEW:", callback.CheckoutRequestID);
+      return;
+    }
     const items = callback.CallbackMetadata?.Item || [];
     const get = name => items.find(item => item.Name === name)?.Value;
     const receipt = get("MpesaReceiptNumber");
@@ -306,19 +380,9 @@ app.post("/payments/stk-callback", async (req, res) => {
 app.post("/payments/confirmation", async (req, res) => {
   res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
   try {
-    const body = req.body || {};
-    if (!body.BillRefNumber || !body.TransID || !body.TransAmount) {
-      console.warn("C2B payment has no usable order reference; no airtime sent.");
-      return;
-    }
-    const outcome = await recordPayment({
-      orderReference: String(body.BillRefNumber).trim().toUpperCase(),
-      receipt: String(body.TransID),
-      amount: Number(body.TransAmount),
-      transactionId: String(body.TransID),
-      payload: body
-    });
-    console.log("C2B payment callback processed:", outcome.outcome);
+    // C2B is not used by the current checkout flow. Keep it inert until a separately
+    // verified C2B order-matching and validation workflow is implemented.
+    console.warn("C2B callback received but ignored; current checkout uses STK Push only.");
   } catch (error) {
     console.error("C2B confirmation processing error:", error.message);
   }
