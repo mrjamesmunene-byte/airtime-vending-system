@@ -136,13 +136,13 @@ async function sendAirtime(order, { allowControlledTest = false } = {}) {
 
   // Claim the order before calling the provider so duplicate callbacks cannot send twice.
   const claimed = await pool.query(
-    "UPDATE airtime_orders SET status='AIRTIME_SUBMITTED', updated_at=NOW() WHERE id=$1 AND status='PAID' RETURNING *",
-    [order.id]
+    "UPDATE airtime_orders SET status='AIRTIME_SUBMITTED', updated_at=NOW() WHERE id=$1 AND (status='PAID' OR ($2::boolean AND status='REVIEW' AND airtime_provider_request_id IS NULL)) RETURNING *",
+    [order.id, allowControlledTest]
   );
   if (!claimed.rowCount) return;
   const claimedOrder = claimed.rows[0];
   const attempt = await pool.query(
-    "INSERT INTO airtime_delivery_attempts (order_id,idempotency_key,status) VALUES ($1,$2,'CREATED') ON CONFLICT (idempotency_key) DO NOTHING RETURNING id",
+    "INSERT INTO airtime_delivery_attempts (order_id,idempotency_key,status) VALUES ($1,$2,'CREATED') ON CONFLICT (idempotency_key) DO UPDATE SET status='CREATED', response_payload=NULL, updated_at=NOW() WHERE airtime_delivery_attempts.status='UNKNOWN' AND airtime_delivery_attempts.provider_request_id IS NULL RETURNING id",
     [claimedOrder.id, "airtime-" + claimedOrder.id]
   );
   if (!attempt.rowCount) return;
@@ -257,7 +257,7 @@ app.post("/airtime-test", async (req, res) => {
     const found = await pool.query("SELECT * FROM airtime_orders WHERE order_reference=$1", [testReference]);
     if (!found.rowCount) return res.status(404).send("The existing paid test order was not found.");
     const order = found.rows[0];
-    if (order.status !== "PAID" || money(order.amount_kes) !== 10 || normalizePhone(order.recipient_phone) !== testPhone) {
+    if (!["PAID", "REVIEW"].includes(order.status) || money(order.amount_kes) !== 10 || normalizePhone(order.recipient_phone) !== testPhone || order.airtime_provider_request_id) {
       return res.status(409).send("The order is not eligible for this one-time KSh 10 test. No airtime was sent.");
     }
     await sendAirtime(order, { allowControlledTest: true });
