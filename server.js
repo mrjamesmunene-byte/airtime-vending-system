@@ -219,7 +219,7 @@ app.post("/api/payments/stk-push", async (req, res) => {
     if (!found.rowCount || found.rows[0].status !== "PENDING_PAYMENT") return res.status(404).json({ error: "Pending order not found." });
     const order = found.rows[0];
     const token = await mpesaAccessToken();
-    const timestamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
+    const timestamp = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date()).replace(/\D/g, "");
     const password = Buffer.from(shortcode + passkey + timestamp).toString("base64");
     const payload = {
       BusinessShortCode: shortcode,
