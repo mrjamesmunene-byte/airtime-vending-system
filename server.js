@@ -59,7 +59,7 @@ app.post("/airtime/send", async (req, res) => {
     const phoneNumber = String(req.body.phoneNumber || "").trim();
     const amount = Number(req.body.amount);
 
-    if (!/^\\+254[17]\\d{8}$/.test(phoneNumber)) {
+    if (!/^\+254[17]\d{8}$/.test(phoneNumber)) {
         return res.status(400).json({ error: "Use a Kenyan mobile number in +254XXXXXXXXX format." });
     }
     if (!Number.isFinite(amount) || amount < 10 || amount > 10000) {
