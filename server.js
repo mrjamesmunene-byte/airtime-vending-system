@@ -233,7 +233,7 @@ app.post("/api/payments/stk-push", async (req, res) => {
       BusinessShortCode: shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: process.env.MPESA_TRANSACTION_TYPE || "CustomerBuyGoodsOnline",
+      TransactionType: process.env.MPESA_TRANSACTION_TYPE || "CustomerPayBillOnline",
       Amount: Math.round(Number(order.amount_kes)),
       PartyA: payerPhone.replace("+", ""),
       PartyB: shortcode,
