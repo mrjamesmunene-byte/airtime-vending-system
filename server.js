@@ -9,6 +9,20 @@ app.get("/", (req, res) => {
     res.send("Airtime Vending System is running!");
 });
 
+// Public health check: confirms the service is responding without exposing secrets.
+app.get("/health", (req, res) => {
+    res.status(200).json({
+        status: "ok",
+        service: "airtime-vending-system",
+        callbacks: {
+            airtimeValidation: "/validation",
+            airtimeStatus: "/airtime/callback",
+            mpesaConfirmation: "/payments/confirmation"
+        },
+        liveAirtimeEnabled: false
+    });
+});
+
 // Safaricom M-Pesa payment confirmation
 app.post("/payments/confirmation", (req, res) => {
     console.log("Payment received:", JSON.stringify(req.body));
