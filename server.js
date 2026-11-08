@@ -23,10 +23,10 @@ const pool = process.env.DATABASE_URL
 
 const money = value => Number(Number(value).toFixed(2));
 const normalizePhone = value => {
-  let p = String(value || "").replace(/[\\s-]/g, "");
+  let p = String(value || "").replace(/[\s-]/g, "");
   if (p.startsWith("0")) p = "+254" + p.slice(1);
   if (p.startsWith("254")) p = "+" + p;
-  return /^\\+254[17]\\d{8}$/.test(p) ? p : null;
+  return /^\+254[17]\d{8}$/.test(p) ? p : null;
 };
 const ref = () => "AV" + crypto.randomBytes(5).toString("hex").toUpperCase();
 const fingerprint = value => crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
