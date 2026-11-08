@@ -99,6 +99,29 @@ async function mpesaAccessToken() {
   return data.access_token;
 }
 
+async function reconcileEarlyAirtimeCallback(orderId, requestId) {
+  // Africa's Talking may deliver the final status callback before the send
+  // response is saved. Reconcile any callback stored during that race.
+  const saved = await pool.query(
+    "SELECT raw_payload FROM airtime_callbacks WHERE provider_request_id=$1 ORDER BY received_at DESC LIMIT 1",
+    [requestId]
+  );
+  if (!saved.rowCount) return;
+  const callback = saved.rows[0].raw_payload || {};
+  const finalStatus = String(callback.status || "").toLowerCase();
+  if (finalStatus !== "success" && finalStatus !== "failed") return;
+  const orderStatus = finalStatus === "success" ? "DELIVERED" : "FAILED";
+  await pool.query(
+    "UPDATE airtime_orders SET status=$2, airtime_provider_status=$3, delivered_at=CASE WHEN $2='DELIVERED' THEN NOW() ELSE delivered_at END, updated_at=NOW() WHERE id=$1 AND status IN ('AIRTIME_SUBMITTED','PAID','REVIEW')",
+    [orderId, orderStatus, callback.status]
+  );
+  await pool.query(
+    "UPDATE airtime_delivery_attempts SET status=$2, updated_at=NOW() WHERE provider_request_id=$1",
+    [requestId, orderStatus]
+  );
+  console.log("Early airtime callback reconciled:", JSON.stringify({ requestId, status: orderStatus }));
+}
+
 async function sendAirtime(order) {
   if (process.env.LIVE_AIRTIME_ENABLED !== "true") {
     console.log("Payment verified; airtime held because LIVE_AIRTIME_ENABLED is not true. Order:", order.order_reference);
@@ -153,6 +176,7 @@ async function sendAirtime(order) {
       "UPDATE airtime_delivery_attempts SET status='SUBMITTED', provider_request_id=$2, response_payload=$3, updated_at=NOW() WHERE id=$1",
       [attempt.rows[0].id, item.requestId, JSON.stringify(result)]
     );
+    await reconcileEarlyAirtimeCallback(claimedOrder.id, item.requestId);
     console.log("Airtime accepted by provider; final delivery callback still pending:", item.requestId);
   } catch (error) {
     await pool.query("UPDATE airtime_orders SET status='REVIEW', airtime_provider_status='Provider request outcome unknown', updated_at=NOW() WHERE id=$1",
