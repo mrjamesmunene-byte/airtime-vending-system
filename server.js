@@ -122,8 +122,8 @@ async function reconcileEarlyAirtimeCallback(orderId, requestId) {
   console.log("Early airtime callback reconciled:", JSON.stringify({ requestId, status: orderStatus }));
 }
 
-async function sendAirtime(order) {
-  if (process.env.LIVE_AIRTIME_ENABLED !== "true") {
+async function sendAirtime(order, { allowControlledTest = false } = {}) {
+  if (process.env.LIVE_AIRTIME_ENABLED !== "true" && !allowControlledTest) {
     console.log("Payment verified; airtime held because LIVE_AIRTIME_ENABLED is not true. Order:", order.order_reference);
     return;
   }
@@ -237,6 +237,36 @@ async function recordPayment({ orderReference, receipt, amount, transactionId, p
 }
 
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
+app.get("/airtime-test", (req, res) => {
+  res.type("html").send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Airtime test</title></head><body style="font:16px Arial;max-width:420px;margin:40px auto;padding:16px"><h2>Controlled airtime test</h2><p>This sends the existing KSh 10 paid test order to the pre-approved test number. Do not submit more than once.</p><form method="post" action="/airtime-test"><label>Test access code<br><input name="token" type="password" required style="width:100%;padding:12px;margin:8px 0"></label><button type="submit" style="padding:12px 18px">Send KSh 10 test airtime</button></form></body></html>`);
+});
+app.post("/airtime-test", async (req, res) => {
+  const expected = String(process.env.AIRTIME_TEST_TOKEN || "");
+  const supplied = String(req.body?.token || "");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(supplied);
+  if (!expected || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(403).send("Access denied.");
+  }
+  if (!pool || !AT_USERNAME || !AT_API_KEY) return res.status(503).send("Database or airtime provider configuration is unavailable.");
+  const testReference = String(process.env.AIRTIME_TEST_ORDER_REF || "");
+  const testPhone = normalizePhone(process.env.AIRTIME_TEST_RECIPIENT || "");
+  if (!testReference || !testPhone) return res.status(503).send("Controlled test is not configured.");
+  try {
+    const found = await pool.query("SELECT * FROM airtime_orders WHERE order_reference=$1", [testReference]);
+    if (!found.rowCount) return res.status(404).send("The existing paid test order was not found.");
+    const order = found.rows[0];
+    if (order.status !== "PAID" || money(order.amount_kes) !== 10 || normalizePhone(order.recipient_phone) !== testPhone) {
+      return res.status(409).send("The order is not eligible for this one-time KSh 10 test. No airtime was sent.");
+    }
+    await sendAirtime(order, { allowControlledTest: true });
+    const after = await pool.query("SELECT status, airtime_provider_status FROM airtime_orders WHERE id=$1", [order.id]);
+    return res.status(200).send("Test request processed. Order status: " + (after.rows[0]?.status || "unknown") + ". Provider status: " + (after.rows[0]?.airtime_provider_status || "pending") + ". Check your phone and provider callback.");
+  } catch (error) {
+    console.error("Controlled airtime test failed:", error.message);
+    return res.status(500).send("The test could not be completed. Check Render logs before retrying; do not submit again.");
+  }
+});
 app.get("/health", async (req, res) => {
   let databaseReady = false;
   if (pool) {
