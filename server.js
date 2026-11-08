@@ -257,6 +257,7 @@ app.post("/api/payments/stk-push", async (req, res) => {
       "UPDATE airtime_orders SET payer_phone=$2, mpesa_checkout_request_id=$3, mpesa_merchant_request_id=$4, updated_at=NOW() WHERE id=$1",
       [order.id, payerPhone, data.CheckoutRequestID, data.MerchantRequestID || null]
     );
+    console.log("STK Push accepted by Daraja:", JSON.stringify({ orderReference, checkoutRequestId: data.CheckoutRequestID, merchantRequestId: data.MerchantRequestID || null }));
     res.status(200).json({ message: "STK Push sent. Complete payment on your phone.", orderReference, checkoutRequestId: data.CheckoutRequestID });
   } catch (error) {
     console.error("STK Push error:", error.message);
@@ -265,6 +266,11 @@ app.post("/api/payments/stk-push", async (req, res) => {
 });
 
 app.post("/payments/stk-callback", async (req, res) => {
+  const incomingCallback = req.body?.Body?.stkCallback;
+  console.log("STK callback received:", JSON.stringify({
+    checkoutRequestId: incomingCallback?.CheckoutRequestID || null,
+    resultCode: incomingCallback?.ResultCode ?? null
+  }));
   res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
   try {
     const callback = req.body?.Body?.stkCallback;
