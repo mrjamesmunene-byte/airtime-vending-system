@@ -27,6 +27,8 @@ app.post("/payments/validation", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// Safaricom callback
 app.post('/callback', (req, res) => {
     console.log('Safaricom callback received:', JSON.stringify(req.body));
 
@@ -35,6 +37,13 @@ app.post('/callback', (req, res) => {
         ResultDesc: "Accepted"
     });
 });
+
+// Africa's Talking Airtime transaction status notifications
+app.post('/airtime/callback', (req, res) => {
+    console.log("Africa's Talking Airtime notification:", JSON.stringify(req.body));
+    res.status(200).send("Received");
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
