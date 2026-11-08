@@ -48,7 +48,15 @@ async function mpesaAccessToken() {
   const response = await fetch(MPESA_BASE_URL + "/oauth/v1/generate?grant_type=client_credentials", {
     headers: { Authorization: "Basic " + auth }
   });
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
+  console.info("M-Pesa OAuth check:", JSON.stringify({
+    httpStatus: response.status,
+    tokenReceived: Boolean(data.access_token),
+    expiresIn: data.expires_in || null,
+    environment: MPESA_ENV,
+    errorCode: data.errorCode || null,
+    errorMessage: data.errorMessage || null
+  }));
   if (!response.ok || !data.access_token) throw new Error("Could not obtain M-Pesa access token.");
   return data.access_token;
 }
