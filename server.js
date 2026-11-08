@@ -10,8 +10,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 3000;
-const AT_USERNAME = process.env.AT_USERNAME;
-const AT_API_KEY = process.env.AT_API_KEY;
+const AT_USERNAME = String(process.env.AT_USERNAME || "").trim();
+// Render secrets can accidentally contain copied line breaks; normalize the token before using it as an HTTP header.
+const AT_API_KEY = String(process.env.AT_API_KEY || "").replace(/\\s+/g, "");
 const AT_BASE_URL = process.env.AT_BASE_URL || "https://api.sandbox.africastalking.com";
 const MPESA_ENV = process.env.MPESA_ENV || "sandbox";
 const MPESA_BASE_URL = MPESA_ENV === "production"
