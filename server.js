@@ -116,7 +116,7 @@ async function sendAirtime(order) {
   }
 }
 
-async function recordPayment({ orderReference, receipt, amount, transactionId, payload }) {
+async function recordPayment({ orderReference, receipt, amount, transactionId, payerPhone, payload }) {
   if (!pool) throw new Error("Database is not configured.");
   const client = await pool.connect();
   let paidOrder = null;
@@ -134,6 +134,11 @@ async function recordPayment({ orderReference, receipt, amount, transactionId, p
       await client.query("UPDATE airtime_orders SET status='REVIEW', updated_at=NOW() WHERE id=$1", [order.id]);
       await client.query("COMMIT");
       return { outcome: "AMOUNT_MISMATCH" };
+    }
+    if (payerPhone && normalizePhone(payerPhone) !== normalizePhone(order.payer_phone)) {
+      await client.query("UPDATE airtime_orders SET status='REVIEW', updated_at=NOW() WHERE id=$1", [order.id]);
+      await client.query("COMMIT");
+      return { outcome: "PAYER_PHONE_MISMATCH" };
     }
     if (order.status !== "PENDING_PAYMENT") {
       await client.query("COMMIT");
@@ -275,6 +280,7 @@ app.post("/payments/stk-callback", async (req, res) => {
       receipt,
       amount: paidAmount,
       transactionId: callback.CheckoutRequestID,
+      payerPhone: String(paidPhone || ""),
       payload: req.body
     });
     console.log("STK payment callback processed:", outcome.outcome);
