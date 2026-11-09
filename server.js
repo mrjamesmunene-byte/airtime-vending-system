@@ -183,7 +183,8 @@ async function sendAirtime(order, { allowControlledTest = false } = {}) {
     await pool.query("UPDATE airtime_orders SET status='REVIEW', airtime_provider_status='Provider request outcome unknown', updated_at=NOW() WHERE id=$1",
       [claimedOrder.id]);
     await pool.query("UPDATE airtime_delivery_attempts SET status='UNKNOWN', updated_at=NOW() WHERE id=$1", [attempt.rows[0].id]);
-    console.error("Airtime request outcome unknown; do not retry automatically:", error.message);
+    // Never print raw provider error text: malformed-header errors can include credential values.
+    console.error("Airtime request outcome unknown; do not retry automatically. Check provider configuration and request status in the dashboard.");
   }
 }
 
