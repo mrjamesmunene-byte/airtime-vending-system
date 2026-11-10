@@ -36,8 +36,10 @@ async function initializeDatabase() {
   if (!pool) return;
   const first = fs.readFileSync(path.join(__dirname, "migrations/001_initial_schema.sql"), "utf8");
   const second = fs.readFileSync(path.join(__dirname, "migrations/002_payment_checkout.sql"), "utf8");
+  const third = fs.readFileSync(path.join(__dirname, "migrations/003_c2b_auto_airtime.sql"), "utf8");
   await pool.query(first);
   await pool.query(second);
+  await pool.query(third);
   console.log("Database schema is ready.");
 }
 
@@ -281,6 +283,8 @@ app.get("/health", async (req, res) => {
     databaseReady,
     mpesaCredentialsConfigured: Boolean(process.env.MPESA_CONSUMER_KEY && process.env.MPESA_CONSUMER_SECRET),
     africasTalkingConfigured: Boolean(AT_USERNAME && AT_API_KEY),
+    c2bEnabled: process.env.MPESA_C2B_ENABLED === "true",
+    mpesaShortcodeConfigured: Boolean(process.env.MPESA_SHORTCODE),
     liveAirtimeEnabled: process.env.LIVE_AIRTIME_ENABLED === "true",
     paymentFlow: "M-Pesa STK Push with verified callback and unique order reference"
   });
@@ -433,12 +437,65 @@ app.post("/payments/stk-callback", async (req, res) => {
   }
 });
 
+async function recordC2BPayment(payload) {
+  if (process.env.MPESA_C2B_ENABLED !== "true") {
+    console.warn("C2B callback received while C2B processing is disabled.");
+    return { outcome: "C2B_DISABLED" };
+  }
+  const transactionId = String(payload.TransID || "").trim();
+  const amount = Number(payload.TransAmount);
+  const payerPhone = normalizePhone(payload.MSISDN);
+  const shortcode = String(payload.BusinessShortCode || payload.ShortCode || "").trim();
+  const expectedShortcode = String(process.env.MPESA_SHORTCODE || "").trim();
+  if (!transactionId || !payerPhone || !Number.isFinite(amount) || amount < 10 || amount > 10000) {
+    console.warn("C2B callback rejected: missing or invalid transaction fields.");
+    return { outcome: "INVALID_C2B_FIELDS" };
+  }
+  if (!expectedShortcode || !shortcode || shortcode !== expectedShortcode) {
+    console.warn("C2B callback rejected: business shortcode mismatch or not configured.");
+    return { outcome: "SHORTCODE_MISMATCH" };
+  }
+
+  const client = await pool.connect();
+  let paidOrder = null;
+  try {
+    await client.query("BEGIN");
+    const fp = fingerprint(payload);
+    await client.query(
+      "INSERT INTO payment_callbacks (callback_fingerprint,mpesa_receipt_number,transaction_id,amount_kes,raw_payload) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (callback_fingerprint) DO NOTHING",
+      [fp, transactionId, transactionId, amount, JSON.stringify(payload)]
+    );
+    const inserted = await client.query(
+      "INSERT INTO airtime_orders (id,order_reference,network,recipient_phone,amount_kes,status,mpesa_receipt_number,mpesa_transaction_id,payer_phone,paid_at) VALUES ($1,$2,'AUTO',$3,$4,'PAID',$5,$5,$3,NOW()) ON CONFLICT DO NOTHING RETURNING *",
+      [crypto.randomUUID(), ref(), payerPhone, money(amount), transactionId]
+    );
+    if (!inserted.rowCount) {
+      await client.query("COMMIT");
+      return { outcome: "DUPLICATE_OR_CONFLICTING_C2B_PAYMENT" };
+    }
+    paidOrder = inserted.rows[0];
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error.code === "23505") return { outcome: "DUPLICATE_C2B_PAYMENT" };
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (paidOrder) await sendAirtime(paidOrder);
+  return { outcome: "C2B_PAYMENT_RECORDED", orderReference: paidOrder.order_reference };
+}
+
 app.post("/payments/confirmation", async (req, res) => {
+  // Acknowledge Safaricom immediately; processing continues asynchronously.
   res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
   try {
-    // C2B is not used by the current checkout flow. Keep it inert until a separately
-    // verified C2B order-matching and validation workflow is implemented.
-    console.warn("C2B callback received but ignored; current checkout uses STK Push only.");
+    if (!pool) {
+      console.error("C2B callback received but DATABASE_URL is not configured.");
+      return;
+    }
+    const outcome = await recordC2BPayment(req.body || {});
+    console.log("C2B confirmation processed:", JSON.stringify(outcome));
   } catch (error) {
     console.error("C2B confirmation processing error:", error.message);
   }
