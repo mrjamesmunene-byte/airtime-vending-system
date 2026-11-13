@@ -102,6 +102,32 @@ async function mpesaAccessToken() {
   return data.access_token;
 }
 
+async function checkAfricaTalkingCredentials() {
+  if (!AT_USERNAME || !AT_API_KEY) {
+    console.warn("Africa's Talking credential check skipped: configuration missing.");
+    return;
+  }
+  try {
+    const url = new URL("/version1/user", AT_BASE_URL);
+    url.searchParams.set("username", AT_USERNAME);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", apiKey: AT_API_KEY },
+      signal: AbortSignal.timeout(8000)
+    });
+    const data = await response.json().catch(() => ({}));
+    console.info("Africa's Talking read-only credential check:", JSON.stringify({
+      httpStatus: response.status,
+      authenticated: response.ok,
+      environment: AT_BASE_URL.includes("sandbox") ? "sandbox" : "production",
+      usernameConfigured: Boolean(AT_USERNAME),
+      providerErrorCode: data.errorCode || null
+    }));
+  } catch (error) {
+    console.warn("Africa's Talking read-only credential check could not complete:", error.name || "NetworkError");
+  }
+}
+
 async function reconcileEarlyAirtimeCallback(orderId, requestId) {
   // Africa's Talking may deliver the final status callback before the send
   // response is saved. Reconcile any callback stored during that race.
@@ -539,6 +565,7 @@ async function start() {
   try {
     if (pool) await initializeDatabase();
     else console.warn("DATABASE_URL is missing; order and payment features are disabled.");
+    await checkAfricaTalkingCredentials();
     app.listen(PORT, () => console.log("Server running on port " + PORT));
   } catch (error) {
     console.error("Startup failed:", error.message);
