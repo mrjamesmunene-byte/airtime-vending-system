@@ -112,16 +112,17 @@ async function checkAfricaTalkingCredentials() {
     url.searchParams.set("username", AT_USERNAME);
     const response = await fetch(url, {
       method: "GET",
-      headers: { Accept: "application/json", apiKey: AT_API_KEY },
+      headers: { Accept: "application/xml", Apikey: AT_API_KEY },
       signal: AbortSignal.timeout(8000)
     });
-    const data = await response.json().catch(() => ({}));
+    const responseText = await response.text();
     console.info("Africa's Talking read-only credential check:", JSON.stringify({
       httpStatus: response.status,
       authenticated: response.ok,
       environment: AT_BASE_URL.includes("sandbox") ? "sandbox" : "production",
       usernameConfigured: Boolean(AT_USERNAME),
-      providerErrorCode: data.errorCode || null
+      apiKeyLength: AT_API_KEY.length,
+      providerResponse: responseText.slice(0, 180).replace(/[\\r\\n]/g, " ")
     }));
   } catch (error) {
     console.warn("Africa's Talking read-only credential check could not complete:", error.name || "NetworkError");
