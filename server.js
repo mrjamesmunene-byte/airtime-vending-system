@@ -122,6 +122,7 @@ async function checkAfricaTalkingCredentials() {
       environment: AT_BASE_URL.includes("sandbox") ? "sandbox" : "production",
       usernameConfigured: Boolean(AT_USERNAME),
       apiKeyLength: AT_API_KEY.length,
+      keyIs64HexCharacters: /^[a-fA-F0-9]{64}$/.test(AT_API_KEY),
       providerResponse: responseText.slice(0, 180).replace(/[\\r\\n]/g, " ")
     }));
   } catch (error) {
